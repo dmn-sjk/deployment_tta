@@ -1,0 +1,10 @@
+# GPU time (trtexec) and sizes of every engine, also the trtexec-built
+# one: the cost of LayerNorm parameters as inputs and in FP32.
+experiment: trtexec
+runs:
+  - {engine: vit_fp16_lninputs_ln32_sm32}
+  - {engine: vit_fp16_lninputs_ln32_sm16}
+  - {engine: vit_fp16_lninputs_ln16_sm32}
+  - {engine: vit_fp16_lnconst_ln32_sm32}
+  - {engine: vit_fp16_lnconst_ln16_sm32}
+  - {engine: vit_fp16_lninputs_ln32_sm32_trtexec}

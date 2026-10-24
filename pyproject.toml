@@ -1,0 +1,47 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Engines and ONNX files are large: keep pytest temp dirs off the root filesystem.
+addopts = "-p no:cacheprovider --basetemp=/data/scratch/pytest"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+cache-dir = "/data/cache/ruff"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+# ruff format owns code line length. It cannot split long strings.
+ignore = ["E501"]
+
+[tool.ruff.lint.pycodestyle]
+# PEP 8: docstrings and comments wrap earlier than code.
+max-doc-length = 72
+
+[tool.docformatter]
+recursive = true
+wrap-summaries = 72
+wrap-descriptions = 72
+
+[tool.mypy]
+python_version = "3.10"
+# tests import helpers from conftest.
+mypy_path = "src:tests"
+explicit_package_bases = true
+# Cache on the data dir, not the repo or root filesystem.
+cache_dir = "/data/cache/mypy"
+
+[[tool.mypy.overrides]]
+# No type stubs shipped.
+module = ["polygraphy.*", "onnx.*", "torchvision.*", "yaml"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Generated stubs (Dockerfile) serve Pylance; they are too broken for mypy.
+module = ["tensorrt", "tensorrt.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
+[tool.pyright]
+# torch 2.5 re-exports without __all__ (e.g. torch.optim.SGD), which
+# pyright treats as private imports.
+reportPrivateImportUsage = false

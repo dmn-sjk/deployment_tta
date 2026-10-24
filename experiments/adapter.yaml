@@ -1,0 +1,7 @@
+# Standalone adapter step of the main adapter (m = B, CUDA graph) per
+# B of the TENT grid.
+experiment: adapter
+runs:
+  - {B: 1, micro_batch: 1, graph: true}
+  - {B: 16, micro_batch: 16, graph: true}
+  - {B: 64, micro_batch: 64, graph: true}

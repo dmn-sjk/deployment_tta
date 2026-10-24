@@ -1,0 +1,22 @@
+# Dev tool, not in the final campaign: engine variants and adapter
+# variants (eager, m = 4) at 30 fps.
+experiment: realtime
+grids:
+  tent: &tent
+    - {B: 1, S: 1}
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+  tent_B16_up: &tent_B16_up
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+runs:
+  - {method: trt_source, export: vit_fp16_lninputs_ln32_sm16, fps: [30]}
+  - {method: trt_source, export: vit_fp16_lninputs_ln16_sm32, fps: [30]}
+  - {method: trt_source, export: vit_fp16_lnconst_ln32_sm32, fps: [30]}
+  - {method: trt_source, export: vit_fp16_lnconst_ln16_sm32, fps: [30]}
+  - {method: trt_tent, mode: spec, graph: false, tent: *tent, fps: [30]}
+  - {method: trt_tent, mode: spec, micro_batch: 4, tent: *tent_B16_up, fps: [30]}

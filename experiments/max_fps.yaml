@@ -1,0 +1,23 @@
+# Max sustainable fps per method (ADR 0002). Deploy mode drops instead
+# of falling behind, so it has no max fps. The engine variants show the
+# end-to-end cost of LayerNorm parameters as inputs and in FP32.
+# TensorRT TENT repeats the whole measurement 3 times: its max fps
+# varies by up to 18% between processes, the report shows the median
+# repeat and the range.
+experiment: max_fps
+grids:
+  tent: &tent
+    - {B: 1, S: 1}
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+runs:
+  - {method: pytorch_source}
+  - {method: trt_source}
+  - {method: trt_source, export: vit_fp16_lninputs_ln32_sm16}
+  - {method: trt_source, export: vit_fp16_lninputs_ln16_sm32}
+  - {method: trt_source, export: vit_fp16_lnconst_ln32_sm32}
+  - {method: trt_source, export: vit_fp16_lnconst_ln16_sm32}
+  - {method: pytorch_tent, tent: *tent}
+  - {method: trt_tent, mode: spec, tent: *tent, repeats: 3}

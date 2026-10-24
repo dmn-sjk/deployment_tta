@@ -1,0 +1,18 @@
+# Dev tool, not in the final campaign: max fps of the adapter variants
+# (eager, m = 4). The engine variants are in max_fps.yaml.
+experiment: max_fps
+grids:
+  tent: &tent
+    - {B: 1, S: 1}
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+  tent_B16_up: &tent_B16_up
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+runs:
+  - {method: trt_tent, mode: spec, graph: false, tent: *tent}
+  - {method: trt_tent, mode: spec, micro_batch: 4, tent: *tent_B16_up}

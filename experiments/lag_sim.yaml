@@ -1,0 +1,14 @@
+# Dev tool, not in the final campaign: fixed lags and the replay of
+# each spec-mode max-fps live trace. Needs reference.yaml and
+# max_fps.yaml first. After new live runs, trace_only: true replays the
+# new traces only.
+experiment: lag_sim
+grids:
+  tent: &tent
+    - {B: 1, S: 1}
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+runs:
+  - {tent: *tent}

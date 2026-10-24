@@ -1,0 +1,15 @@
+# Dev tool, not in the final campaign: the precision delta (bf16
+# autocast) and the determinism check (FP32 rerun) of the reference.
+experiment: reference
+grids:
+  tent: &tent
+    - {B: 1, S: 1}
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+runs:
+  - {source: true, precision: bf16}
+  - {tent: *tent, precision: bf16}
+  - {source: true, rerun: true}
+  - {tent: *tent, rerun: true}

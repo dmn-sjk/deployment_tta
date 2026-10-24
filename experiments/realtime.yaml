@@ -1,0 +1,17 @@
+# Every method at a 30 fps camera: sustains it, and its latency. Deploy
+# mode at (16, 1) against input fps, since its effective stride depends
+# on it.
+experiment: realtime
+grids:
+  tent: &tent
+    - {B: 1, S: 1}
+    - {B: 16, S: 1}
+    - {B: 64, S: 1}
+    - {B: 16, S: 2}
+    - {B: 16, S: 8}
+runs:
+  - {method: pytorch_source, fps: [30]}
+  - {method: trt_source, fps: [30]}
+  - {method: pytorch_tent, tent: *tent, fps: [30]}
+  - {method: trt_tent, mode: spec, tent: *tent, fps: [30]}
+  - {method: trt_tent, mode: deploy, tent: [{B: 16, S: 1}], fps: [30, 60, 120, 240, 270, 300, 360, 420, 480, 720]}
