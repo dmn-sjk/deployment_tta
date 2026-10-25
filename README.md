@@ -21,6 +21,77 @@ The accuracy results compare the optimized pipeline against the naive eager PyTo
 - **Eager PyTorch TENT with gradient accumulation.** A single stream delivers one frame at a time, but TENT adapts on batches of B frames. Each adaptation frame runs one forward with grad, which gives its prediction, then one backward on loss / B into the accumulated gradients. Every B-th adaptation frame runs the SGD step and clears the gradients. With stride S, only every S-th frame is an adaptation frame, and the others run a no-grad forward (at S = 1, the published TENT, every frame adapts). Each adaptation frame pays 1 forward + 1 backward, memory does not depend on B, and frame latency stays even. The alternative, buffering B frames and re-running forward + backward at batch B, costs an extra forward per adaptation frame, memory ∝ B and a latency spike on every step frame. The decoupled optimized approach (`trt_tent`) uses that re-forward form, because there the extra forward runs off the inference thread and batch-B kernels use the GPU better.
 - **Adapter step as one CUDA graph.** Forward, backward and the SGD update are captured as a single CUDA graph, so a step is one launch.
 
+## Results
+Measured on one RTX 3080 GPU.
+
+**Baselines:**
+- `EagerSource`: the frozen source model in eager PyTorch FP32, no adaptation.
+- `EagerTENT`: standard TENT in eager PyTorch FP32. Adaptation mixed with inference: on every adaptation frame forward and backward is done (gradient accumulation, optimizer step every B adaptation frames).
+- `TRTSource`: the frozen source model as a TensorRT FP16 engine (LayerNorm and softmax in FP32), no adaptation.
+- `TRTTENT`: My optimized approach. The inference thread runs the TensorRT engine with the latest published LN params. Every S-th frame goes to a decoupled adapter thread, which runs the TENT step in PyTorch (CUDA graph) on its own lower-priority stream and publishes new LN params to the engine. Run in `spec` mode unless stated otherwise - adaptation on every adaptation batch. Can switch to `deploy` mode - bounded adaptation queue, drops the oldest adaptation batch if it cannot keep up with the rate if data input.
+
+**Experimental details:**
+_Max fps_ is the highest frame rate at which p99 end-to-end latency (from a frame's scheduled arrival until its prediction is on the host) stays within one frame interval, and in `spec` mode, the adapter's adaptation batch queue does not grow (it never fills its batch slots fully and it adapted to at least 98% of the adaptation batches). Measured by bisection on 2,000 dev frames first. Then, confirmed on two repeat replays, and step down by 2% of FPS until a full 7,500-frame run holds.
+
+_Latency_ is measured per frame from its scheduled arrival to its prediction being consumed on the host, so it includes queueing behind earlier frames, host-to-device copy, GPU preprocessing, inference, the device-to-host copy of the logits and argmax.
+
+Frame's scheduled arrival time is the time a camera running at exactly the target fps would deliver the frame.
+
+B - batch size.
+S - stride, every S-th frame is an adaptation frame.
+
+**Results:**
+
+| Method | B | S | p50 / p99 @ 30 fps (ms) | Max fps | Device GB | Acc. (%) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `EagerSource` | - | - | 5.61 / 7.24 | 112 | 0.81 | 40.49 ± 0.00 |
+| `TRTSource` | - | - | 1.48 / 1.76 | 697 | 0.49 | 40.49 ± 0.00 |
+| `EagerTENT` | 1 | 1 | 16.28 / 19.94 | 46 | 0.94 | 46.16 ± 0.04 |
+| `EagerTENT` | 16 | 1 | 16.21 / 20.33 | 47 | 0.94 | 46.10 ± 0.02 |
+| `EagerTENT` | 64 | 1 | 15.96 / 19.88 | 47 | 0.94 | 45.89 ± 0.04 |
+| `EagerTENT` | 16 | 2 | 12.71 / 18.44 | 54 | 0.94 | 44.62 ± 0.08 |
+| `EagerTENT` | 16 | 8 | 5.63 / 17.17 | 59 | 0.94 | 42.19 ± 0.05 |
+| `TRTTENT` | 1 | 1 | 1.71 / 1.96 | 171 | 1.37 | 46.16 ± 0.04 |
+| `TRTTENT` | 16 | 1 | 1.48 / 3.27 | 271 | 2.18 | 46.10 ± 0.02 |
+| `TRTTENT` | 64 | 1 | 1.38 / 4.58 | 214 | 4.63 | 45.89 ± 0.04 |
+| `TRTTENT` | 16 | 2 | 1.48 / 3.13 | 256 | 2.18 | 44.62 ± 0.08 |
+| `TRTTENT` | 16 | 8 | 1.48 / 1.86 | 272 | 2.18 | 42.19 ± 0.05 |
+
+1. Every method, Eager included, sustains a 30 fps camera.
+2. TensorRT TENT's max fps is 171 to 272, 4 to 6 times PyTorch TENT's 46 to 59, and 25 to 39% of TensorRT source's 697.
+3. For B >= 16, max fps is capped by frames that run while an adaptation step is ongoing (see _During vs. w/o adaptation_ table).
+4. `TRTTENT` at B = 1, S = 1 uses 1.37 GB vs `EagerTENT`'s 0.94 GB because it holds two copies of the model. The inference thread runs the TensorRT FP16 engine (176 MB plus its execution context and the TensorRT runtime), and the adapter keeps a full PyTorch FP32 ViT-B/16 for the TENT update. The adapter's CUDA graph also pins its own memory pool, so its forward activations and gradients stay reserved between steps instead of returning to the caching allocator. `EagerTENT` runs inference and adaptation on one PyTorch model. Above B = 1 the gap grows because the adapter's batch-B image buffer and activations scale with B (2.18 GB at B = 16, 4.63 GB at B = 64). `EagerTENT` accumulates gradients.
+5. B `TRTTENT`: B = 16 has the highest max fps. B = 1 is throughput-bound. At B = 64 the adapter keeps up, but inference that run during an adaptation step get slower. They share SMs and memory bandwidth with it, and each of their kernels may wait briefly for running batch-64 blocks to free an SM. Accuracy is comparable.
+
+**During vs. w/o adaptation:**
+`TRTTENT` results.
+
+| B | S | Max fps | Interval (ms) | % of frame with ongoing adaptation | p50 / p99 during adaptation (ms) | p50 / p99 w/o adaptation (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 171 | 5.86 | 100% | 1.61 / 1.70 | - |
+| 16 | 1 | 271 | 3.70 | 81% | 2.71 / 3.24 | 1.36 / 1.47 |
+| 64 | 1 | 214 | 4.68 | 54% | 3.90 / 4.60 | 1.33 / 1.49 |
+| 16 | 2 | 256 | 3.91 | 37% | 2.73 / 3.16 | 1.33 / 1.45 |
+| 16 | 8 | 272 | 3.68 | 10% | 2.79 / 3.13 | 1.32 / 1.42 |
+
+**Engine variants: what the adaptable engine costs:**
+
+| Engine | trtexec GPU median / p99 (ms) | `TRTSource` max fps | max abs logit difference vs PyTorch FP32 |
+| --- | --- | --- | --- |
+| LN params inputs, LN FP32, softmax FP32 (main) | 1.093 / 1.125 | 697 | 0.067 |
+| LN params inputs, LN FP32, softmax FP16 | 1.080 / 1.114 | 693 | 0.069 |
+| LN params inputs, LN FP16, softmax FP32 | 1.101 / 1.136 | 713 | 0.077 |
+| LN params constant, LN FP32, softmax FP32 | 1.084 / 1.116 | 689 | 0.067 |
+| LN params constant, LN FP16, softmax FP32 | 1.090 / 1.124 | 697 | 0.077 |
+
+All variants are within 2% GPU time and within max fps noise. Making LN params engine inputs in FP32 costs nothing measurable on the 3080. All engines are 176 MB with 3 MB of activations.
+
+**Adaptation correctness checks:**
+On 30 FPS dev stream.
+
+- Offline PyTorch FP32 deterministic TENT vs. `EagerTENT`: 100.00% prediction agreement - both FP32.
+- Offline PyTorch FP32 deterministic TENT vs. `TRTTENT` spec: −0.07 to +0.01 pp accuracy difference, agreement 99.21 to 99.41% - due to FP16 and adaptation lag of 0/1 steps (asynchronous).
+
 ## Setup
 
 ### Requirements
